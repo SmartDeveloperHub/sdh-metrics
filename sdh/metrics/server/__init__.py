@@ -28,6 +28,10 @@ from agora.provider.server import AgoraApp
 import calendar
 from datetime import datetime
 from agora.provider.server import APIError
+from flask import make_response, request, url_for
+from flask_negotiate import produces
+from rdflib.namespace import Namespace, RDF
+from rdflib import Graph, URIRef, Literal, BNode
 
 import pkg_resources
 try:
@@ -36,14 +40,56 @@ except ImportError:
     import pkgutil
     __path__ = pkgutil.extend_path(__path__, __name__)
 
+def _get_accept():
+    return str(request.accept_mimetypes).split(',')
+
+METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
+PLATFORM = Namespace('http://www.smartdeveloperhub.org/vocabulary/platform#')
 
 class MetricsApp(AgoraApp):
+    @staticmethod
+    def __decide_serialization_format():
+        mimes = _get_accept()
+        if 'text/turtle' in mimes:
+            return 'text/turtle', 'turtle'
+        elif 'text/rdf+n3' in mimes:
+            return 'text/rdf+n3', 'n3'
+        else:
+            return 'application/rdf+xml', 'xml'
+
+    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'text/plain')
+    def __root(self):
+        root_g = Graph()
+        root_g.bind('metrics', METRICS)
+        root_g.bind('platform', PLATFORM)
+        me = URIRef(url_for('__root', _external=True))
+        root_g.add((me, RDF.type, METRICS.MetricService))
+        for mf in self.metrics:
+            endp = URIRef(url_for(mf, _external=True))
+            root_g.add((me, METRICS.hasEndpoint, endp))
+            root_g.add((endp, RDF.type, METRICS.MetricEndpoint))
+
+            md1 = BNode()
+            root_g.add((me, METRICS.calculatesMetric, md1))
+            root_g.add((md1, RDF.type, METRICS.MetricDefinition))
+            root_g.add((md1, PLATFORM.identifier, Literal(mf)))
+            root_g.add((md1, PLATFORM.identifier, Literal(mf)))
+
+            root_g.add((endp, METRICS.supports, md1))
+
+        content_type, format = self.__decide_serialization_format()
+        response = make_response(root_g.serialize(format=format, base=me))
+        response.headers['Content-Type'] = content_type
+        return response
+
     def __init__(self, name):
         import os
         config = os.environ.get('CONFIG', 'sdh.metrics.server.config.DevelopmentConfig')
         super(MetricsApp, self).__init__(name, config)
         from agora.provider.server import config
         config.update(self.config)
+        self.metrics = []
+        self.route('/')(self.__root)
 
     def metric(self, path, handler, calculus=None):
         def decorator(f):
@@ -51,6 +97,7 @@ class MetricsApp(AgoraApp):
             if calculus is not None:
                 add_calculus(calculus)
             f = self.register(path, handler)(f)
+            self.metrics.append(f.func_name)
             return f
         return decorator
 
