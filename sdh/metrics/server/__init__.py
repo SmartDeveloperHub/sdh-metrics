@@ -55,9 +55,9 @@ class MetricsApp(AgoraApp):
         elif 'text/rdf+n3' in mimes:
             return 'text/rdf+n3', 'n3'
         else:
-            return 'application/rdf+xml', 'xml'
+            return 'application/xml', 'xml'
 
-    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'text/plain')
+    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
     def __root(self):
         root_g = Graph()
         root_g.bind('metrics', METRICS)
@@ -168,9 +168,10 @@ class MetricsApp(AgoraApp):
         return lambda f: self.metric(path, context, calculus)(f)
 
     @classmethod
-    def calculate(cls):
+    def calculate(cls, stop_event):
         from sdh.metrics.jobs.calculus import calculate_metrics
-        calculate_metrics()
+
+        calculate_metrics(stop_event)
 
     def run(self, host=None, port=None, debug=None, **options):
         tasks = options.get('tasks', [])
