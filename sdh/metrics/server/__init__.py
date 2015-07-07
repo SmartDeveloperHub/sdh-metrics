@@ -32,6 +32,7 @@ from flask import make_response, request, url_for
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
 from rdflib import Graph, URIRef, Literal, BNode
+from functools import wraps
 
 import pkg_resources
 try:
@@ -91,12 +92,26 @@ class MetricsApp(AgoraApp):
         self.metrics = []
         self.route('/')(self.__root)
 
+    def __add_context(self, f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            data = f(*args, **kwargs)
+            context = kwargs
+            if isinstance(data, tuple):
+                context['begin'] = data[0]
+                data = data[1]
+            if type(data) == list:
+                context['size'] = len(data)
+            return context, data
+
+        return wrapper
+
     def metric(self, path, handler, calculus=None):
         def decorator(f):
             from sdh.metrics.jobs.calculus import add_calculus
             if calculus is not None:
                 add_calculus(calculus)
-            f = self.register(path, handler)(f)
+            f = self.register(path, handler)(self.__add_context(f))
             self.metrics.append(f.func_name)
             return f
         return decorator
@@ -117,17 +132,22 @@ class MetricsApp(AgoraApp):
 
     @staticmethod
     def _get_basic_context(request):
-        begin = request.args.get('begin', 0)
-        end = request.args.get('end', calendar.timegm(datetime.utcnow().timetuple()))
-        return {'begin': int(begin), 'end': int(end)}
+        begin = int(request.args.get('begin', 0))
+        end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
+        if end < begin:
+            raise APIError('Begin cannot be higher than end')
+        return {'begin': begin, 'end': end}
 
     def _get_metric_context(self, request):
         num = request.args.get('num', 1)
         context = self._get_basic_context(request)
         context['num'] = max(0, int(num))
+        context['step'] = context['end'] - context['begin']
         if context['num']:
-            if not (context['end'] - context['begin']) / context['num']:
+            context['step'] /= context['num']
+            if not context['step']:
                 raise APIError('Resulting step is 0')
+
         return context
 
     def orgmetric(self, path, calculus=None):
@@ -173,7 +193,6 @@ class MetricsApp(AgoraApp):
     @classmethod
     def calculate(cls, stop_event):
         from sdh.metrics.jobs.calculus import calculate_metrics
-
         calculate_metrics(stop_event)
 
     def run(self, host=None, port=None, debug=None, **options):
