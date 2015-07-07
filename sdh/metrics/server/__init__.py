@@ -24,33 +24,38 @@
 
 __author__ = 'Fernando Serena'
 
-from agora.provider.server import AgoraApp
+from agora.provider.server import AgoraApp, get_accept
 import calendar
 from datetime import datetime
-from agora.provider.server import APIError
-from flask import make_response, request, url_for
+from agora.provider.server import APIError, NotFound
+from flask import make_response, url_for
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
-from rdflib import Graph, URIRef, Literal, BNode
+from rdflib import Graph, URIRef, Literal
 from functools import wraps
 
 import pkg_resources
+
 try:
     pkg_resources.declare_namespace(__name__)
 except ImportError:
     import pkgutil
+
     __path__ = pkgutil.extend_path(__path__, __name__)
 
-def _get_accept():
-    return str(request.accept_mimetypes).split(',')
 
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
 PLATFORM = Namespace('http://www.smartdeveloperhub.org/vocabulary/platform#')
 
-class MetricsApp(AgoraApp):
+class MetricsGraph(Graph):
+    def __init__(self):
+        super(MetricsGraph, self).__init__()
+        self.bind('metrics', METRICS)
+        self.bind('platform', PLATFORM)
+
     @staticmethod
     def __decide_serialization_format():
-        mimes = _get_accept()
+        mimes = get_accept()
         if 'text/turtle' in mimes:
             return 'text/turtle', 'turtle'
         elif 'text/rdf+n3' in mimes:
@@ -58,39 +63,75 @@ class MetricsApp(AgoraApp):
         else:
             return 'application/xml', 'xml'
 
-    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
-    def __root(self):
-        root_g = Graph()
-        root_g.bind('metrics', METRICS)
-        root_g.bind('platform', PLATFORM)
-        me = URIRef(url_for('__root', _external=True))
-        root_g.add((me, RDF.type, METRICS.MetricService))
-        for mf in self.metrics:
-            endp = URIRef(url_for(mf, _external=True))
-            root_g.add((me, METRICS.hasEndpoint, endp))
-            root_g.add((endp, RDF.type, METRICS.MetricEndpoint))
+    def serialize(self, destination=None, format="xml",
+                  base=None, encoding=None, **args):
+        content_type, ex_format = self.__decide_serialization_format()
+        return content_type, super(MetricsGraph, self).serialize(destination=destination, format=ex_format,
+                                                                 base=base, encoding=encoding, **args)
 
-            md1 = BNode()
-            root_g.add((me, METRICS.calculatesMetric, md1))
-            root_g.add((md1, RDF.type, METRICS.MetricDefinition))
-            root_g.add((md1, PLATFORM.identifier, Literal(mf)))
-            root_g.add((md1, PLATFORM.identifier, Literal(mf)))
+class MetricsApp(AgoraApp):
 
-            root_g.add((endp, METRICS.supports, md1))
+    @staticmethod
+    def __get_metric_definition_graph(md):
+        g = MetricsGraph()
+        me = URIRef(url_for('__get_definition', md=md, _external=True))
+        g.add((me, RDF.type, METRICS.MetricDefinition))
+        g.add((me, PLATFORM.identifier, Literal(md)))
+        return g
 
-        content_type, format = self.__decide_serialization_format()
-        response = make_response(root_g.serialize(format=format, base=me))
+    @staticmethod
+    def __return_graph(g):
+        content_type, rdf = g.serialize(format=format)
+        response = make_response(rdf)
         response.headers['Content-Type'] = content_type
         return response
 
+    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
+    def __get_definition(self, md):
+        if md not in self.metrics.values():
+            raise NotFound('Unknown metric definition')
+
+        g = self.__get_metric_definition_graph(md)
+        return self.__return_graph(g)
+
+    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
+    def __root(self):
+        g = MetricsGraph()
+        me = URIRef(url_for('__root', _external=True))
+        g.add((me, RDF.type, METRICS.MetricService))
+        for mf in self.metrics.keys():
+            endp = URIRef(url_for(mf, _external=True))
+            g.add((me, METRICS.hasEndpoint, endp))
+
+            mident = self.metrics[mf]
+            md = URIRef(url_for('__get_definition', md=mident, _external=True))
+            g.add((me, METRICS.calculatesMetric, md))
+            g.add((md, RDF.type, METRICS.MetricDefinition))
+            g.add((md, PLATFORM.identifier, Literal(mident)))
+
+        return self.__return_graph(g)
+
     def __init__(self, name):
         import os
+
         config = os.environ.get('CONFIG', 'sdh.metrics.server.config.DevelopmentConfig')
         super(MetricsApp, self).__init__(name, config)
         from agora.provider.server import config
+
         config.update(self.config)
-        self.metrics = []
+        self.metrics = {}
         self.route('/')(self.__root)
+        self.route('/definitions/<md>')(self.__get_definition)
+
+    def __metric_rdfizer(self, func):
+        g = Graph()
+        g.bind('metrics', METRICS)
+        g.bind('platform', PLATFORM)
+        me = URIRef(url_for(func, _external=True))
+        g.add((me, RDF.type, METRICS.MetricEndpoint))
+        g.add((me, METRICS.supports, URIRef(url_for('__get_definition', md=self.metrics[func], _external=True))))
+
+        return g
 
     def __add_context(self, f):
         @wraps(f)
@@ -98,7 +139,7 @@ class MetricsApp(AgoraApp):
             data = f(*args, **kwargs)
             context = kwargs
             if isinstance(data, tuple):
-                context['begin'] = data[0]
+                context.update(data[0])
                 data = data[1]
             if type(data) == list:
                 context['size'] = len(data)
@@ -106,14 +147,17 @@ class MetricsApp(AgoraApp):
 
         return wrapper
 
-    def metric(self, path, handler, calculus=None):
+    def metric(self, path, handler, mid, calculus=None):
         def decorator(f):
             from sdh.metrics.jobs.calculus import add_calculus
+
             if calculus is not None:
                 add_calculus(calculus)
-            f = self.register(path, handler)(self.__add_context(f))
-            self.metrics.append(f.func_name)
+            f = self.__add_context(f)
+            f = self.register(path, handler, self.__metric_rdfizer)(f)
+            self.metrics[f.func_name] = mid
             return f
+
         return decorator
 
     @staticmethod
@@ -150,49 +194,58 @@ class MetricsApp(AgoraApp):
 
         return context
 
-    def orgmetric(self, path, calculus=None):
+    def orgmetric(self, path, mid, calculus=None):
         def context(request):
             return [], self._get_metric_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def repometric(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'org-' + mid, calculus)(f)
+
+    def repometric(self, path, mid, calculus=None):
         def context(request):
             return [self._get_repo_context(request)], self._get_metric_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def usermetric(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'repo-' + mid, calculus)(f)
+
+    def usermetric(self, path, mid, calculus=None):
         def context(request):
             return [self._get_user_context(request)], self._get_metric_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def userrepometric(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'user-' + mid, calculus)(f)
+
+    def userrepometric(self, path, mid, calculus=None):
         def context(request):
             return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def orgtbd(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'user-repo-' + mid, calculus)(f)
+
+    def orgtbd(self, path, mid, calculus=None):
         def context(request):
             return [], self._get_basic_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def repotbd(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'org-' + mid, calculus)(f)
+
+    def repotbd(self, path, mid, calculus=None):
         def context(request):
             return [self._get_repo_context(request)], self._get_basic_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def usertbd(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'repo-' + mid, calculus)(f)
+
+    def usertbd(self, path, mid, calculus=None):
         def context(request):
             return [self._get_user_context(request)], self._get_basic_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
 
-    def userrepotbd(self, path, calculus=None):
+        return lambda f: self.metric(path, context, 'user-' + mid, calculus)(f)
+
+    def userrepotbd(self, path, mid, calculus=None):
         def context(request):
             return [self._get_repo_context(request), context], self._get_basic_context(request)
-        return lambda f: self.metric(path, context, calculus)(f)
+
+        return lambda f: self.metric(path, context, 'user-repo-' + mid, calculus)(f)
 
     @classmethod
     def calculate(cls, stop_event):
         from sdh.metrics.jobs.calculus import calculate_metrics
+
         calculate_metrics(stop_event)
 
     def run(self, host=None, port=None, debug=None, **options):
@@ -200,4 +253,3 @@ class MetricsApp(AgoraApp):
         tasks.append(MetricsApp.calculate)
         options['tasks'] = tasks
         super(MetricsApp, self).run(host, port, debug, **options)
-
