@@ -32,7 +32,8 @@ __calculus = set([])
 def add_calculus(func):
     __calculus.add(func)
 
-def calculate_metrics():
+
+def calculate_metrics(stop_event):
     from sdh.metrics.store import store
     store.execute_pending()
     try:
@@ -56,4 +57,6 @@ def calculate_metrics():
                 c(t_begin, t_end)
 
             next_date = next_date + timedelta(days=1)
+            if stop_event.isSet():
+                return
     store.execute_pending()
