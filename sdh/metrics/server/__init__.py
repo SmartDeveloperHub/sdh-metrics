@@ -125,6 +125,9 @@ class MetricsApp(AgoraApp):
         num = request.args.get('num', 1)
         context = self._get_basic_context(request)
         context['num'] = max(0, int(num))
+        if context['num']:
+            if not (context['end'] - context['begin']) / context['num']:
+                raise APIError('Resulting step is 0')
         return context
 
     def orgmetric(self, path, calculus=None):
