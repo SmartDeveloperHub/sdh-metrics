@@ -27,33 +27,45 @@ __author__ = 'Fernando Serena'
 import redis
 from agora.provider.jobs.collect import collect as acollect
 from datetime import datetime
+from threading import Lock
+# from redis.lock import Lock
 
 class FragmentStore(object):
     def __init__(self, redis_host):
-        pool = redis.ConnectionPool(host=redis_host, port=6379, db=4)
-        self.__r = redis.StrictRedis(connection_pool=pool)
+        self.__pool = redis.ConnectionPool(host=redis_host, port=6379, db=4)
+        self.__r = redis.StrictRedis(connection_pool=self.__pool)
         # self.__r.flushdb()
         self.__pipe = self.__r.pipeline()
         self.__pending_transactions = 0
+        self.__lock = Lock()
+        self.__pending_actions = []
 
-    def execute(self, f):
-        f()
-        self.__pending_transactions += 1
-        if self.__pending_transactions >= 50:
-            try:
-                self.__pipe.execute()
-                self.__pending_transactions = 0
-            except Exception, e:
-                print e.message
+    def __pipeline_actions(self):
+        r = redis.StrictRedis(connection_pool=self.__pool)
+        pipe = r.pipeline()
+        [pipe.__getattribute__(action_name)(*args) for (action_name, args) in self.__pending_actions]
+        try:
+            pipe.execute()
+            self.__pending_actions = []
+        except Exception, e:
+            print e.message
+
+    def execute(self, action_name, *args):
+        self.__lock.acquire()
+        self.__pending_actions.append((action_name, args))
+        if len(self.__pending_actions) >= 200:
+            self.__pipeline_actions()
+        self.__lock.release()
 
     def execute_pending(self):
-        if self.__pending_transactions:
-            self.__pipe.execute()
-            self.__pending_transactions = 0
+        self.__lock.acquire()
+        if self.__pending_actions:
+            self.__pipeline_actions()
+        self.__lock.release()
 
     def update_set(self, key, timestamp, value):
-        self.__pipe.zremrangebyscore(key, timestamp, timestamp)
-        self.execute(lambda: self.__pipe.zadd(key, timestamp, value))
+        self.execute('zremrangebyscore', key, timestamp, timestamp)
+        self.execute('zadd', key, timestamp, value)
 
     def collect(self, tp):
         def wrapper(f):
@@ -61,14 +73,10 @@ class FragmentStore(object):
         return wrapper
 
     @property
-    def db(self):
-        return self.__r
-
-    @property
-    def pipe(self):
-        return self.__pipe
-
-    @property
     def first_date(self):
         import calendar
         return calendar.timegm(datetime.utcnow().timetuple())
+
+    @property
+    def db(self):
+        return self.__r
