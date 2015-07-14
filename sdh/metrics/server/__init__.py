@@ -24,28 +24,28 @@
 
 __author__ = 'Fernando Serena'
 
-from agora.provider.server import AgoraApp, get_accept
+from agora.provider.server.base import AgoraApp, get_accept
 import calendar
 from datetime import datetime
-from agora.provider.server import APIError, NotFound
+from agora.provider.server.base import APIError, NotFound
 from flask import make_response, url_for
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
 from rdflib import Graph, URIRef, Literal
 from functools import wraps
+from sdh.metrics.jobs.calculus import check_triggers
 
 import pkg_resources
-
 try:
     pkg_resources.declare_namespace(__name__)
 except ImportError:
     import pkgutil
-
     __path__ = pkgutil.extend_path(__path__, __name__)
 
 
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
 PLATFORM = Namespace('http://www.smartdeveloperhub.org/vocabulary/platform#')
+
 
 class MetricsGraph(Graph):
     def __init__(self):
@@ -69,8 +69,8 @@ class MetricsGraph(Graph):
         return content_type, super(MetricsGraph, self).serialize(destination=destination, format=ex_format,
                                                                  base=base, encoding=encoding, **args)
 
-class MetricsApp(AgoraApp):
 
+class MetricsApp(AgoraApp):
     @staticmethod
     def __get_metric_definition_graph(md):
         g = MetricsGraph()
@@ -111,17 +111,13 @@ class MetricsApp(AgoraApp):
 
         return self.__return_graph(g)
 
-    def __init__(self, name):
-        import os
+    def __init__(self, name, config_class):
+        super(MetricsApp, self).__init__(name, config_class)
 
-        config = os.environ.get('CONFIG', 'sdh.metrics.server.config.DevelopmentConfig')
-        super(MetricsApp, self).__init__(name, config)
-        from agora.provider.server import config
-
-        config.update(self.config)
         self.metrics = {}
-        self.route('/')(self.__root)
-        self.route('/definitions/<md>')(self.__get_definition)
+        self.route('/metrics')(self.__root)
+        self.route('/metrics/definitions/<md>')(self.__get_definition)
+        self.store = None
 
     def __metric_rdfizer(self, func):
         g = Graph()
@@ -147,17 +143,22 @@ class MetricsApp(AgoraApp):
 
         return wrapper
 
-    def metric(self, path, handler, mid, calculus=None):
+    def metric(self, path, handler, mid):
         def decorator(f):
-            from sdh.metrics.jobs.calculus import add_calculus
 
-            if calculus is not None:
-                add_calculus(calculus)
+            # if calculus is not None:
+            #     add_calculus(calculus)
             f = self.__add_context(f)
-            f = self.register(path, handler, self.__metric_rdfizer)(f)
+            f = self.register('/metrics' + path, handler, self.__metric_rdfizer)(f)
             self.metrics[f.func_name] = mid
             return f
+        return decorator
 
+    def calculus(self, triggers=None):
+        def decorator(f):
+            from sdh.metrics.jobs.calculus import add_calculus
+            add_calculus(f, triggers)
+            return f
         return decorator
 
     @staticmethod
@@ -194,62 +195,59 @@ class MetricsApp(AgoraApp):
 
         return context
 
-    def orgmetric(self, path, mid, calculus=None):
+    def orgmetric(self, path, mid):
         def context(request):
             return [], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'org-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'org-' + mid)(f)
 
-    def repometric(self, path, mid, calculus=None):
+    def repometric(self, path, mid):
         def context(request):
             return [self._get_repo_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'repo-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'repo-' + mid)(f)
 
-    def usermetric(self, path, mid, calculus=None):
+    def usermetric(self, path, mid):
         def context(request):
             return [self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'user-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'user-' + mid)(f)
 
-    def userrepometric(self, path, mid, calculus=None):
+    def userrepometric(self, path, mid):
         def context(request):
             return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'user-repo-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'user-repo-' + mid)(f)
 
-    def orgtbd(self, path, mid, calculus=None):
+    def orgtbd(self, path, mid):
         def context(request):
             return [], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'org-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'org-' + mid)(f)
 
-    def repotbd(self, path, mid, calculus=None):
+    def repotbd(self, path, mid):
         def context(request):
             return [self._get_repo_context(request)], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'repo-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'repo-' + mid)(f)
 
-    def usertbd(self, path, mid, calculus=None):
+    def usertbd(self, path, mid):
         def context(request):
             return [self._get_user_context(request)], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'user-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'user-' + mid)(f)
 
-    def userrepotbd(self, path, mid, calculus=None):
+    def userrepotbd(self, path, mid):
         def context(request):
             return [self._get_repo_context(request), context], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'user-repo-' + mid, calculus)(f)
+        return lambda f: self.metric(path, context, 'user-repo-' + mid)(f)
 
-    @classmethod
-    def calculate(cls, stop_event):
-        from sdh.metrics.jobs.calculus import calculate_metrics
-
-        calculate_metrics(stop_event)
+    def calculate(self, collector, quad, stop_event):
+        check_triggers(collector, quad, stop_event, self)
 
     def run(self, host=None, port=None, debug=None, **options):
         tasks = options.get('tasks', [])
-        tasks.append(MetricsApp.calculate)
+        tasks.append(self.calculate)
         options['tasks'] = tasks
         super(MetricsApp, self).run(host, port, debug, **options)
