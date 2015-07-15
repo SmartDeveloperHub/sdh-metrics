@@ -31,14 +31,14 @@ from threading import Lock
 # from redis.lock import Lock
 
 class FragmentStore(object):
-    def __init__(self, redis_host):
+    def __init__(self, redis_host, max_pending=200):
         self.__pool = redis.ConnectionPool(host=redis_host, port=6379, db=4)
         self.__r = redis.StrictRedis(connection_pool=self.__pool)
-        # self.__r.flushdb()
         self.__pipe = self.__r.pipeline()
         self.__pending_transactions = 0
         self.__lock = Lock()
         self.__pending_actions = []
+        self.__max_pending = max_pending
 
     def __pipeline_actions(self):
         r = redis.StrictRedis(connection_pool=self.__pool)
@@ -53,7 +53,7 @@ class FragmentStore(object):
     def execute(self, action_name, *args):
         self.__lock.acquire()
         self.__pending_actions.append((action_name, args))
-        if len(self.__pending_actions) >= 200:
+        if len(self.__pending_actions) >= self.__max_pending:
             self.__pipeline_actions()
         self.__lock.release()
 
