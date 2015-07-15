@@ -145,9 +145,6 @@ class MetricsApp(AgoraApp):
 
     def metric(self, path, handler, mid):
         def decorator(f):
-
-            # if calculus is not None:
-            #     add_calculus(calculus)
             f = self.__add_context(f)
             f = self.register('/metrics' + path, handler, self.__metric_rdfizer)(f)
             self.metrics[f.func_name] = mid
@@ -195,56 +192,58 @@ class MetricsApp(AgoraApp):
 
         return context
 
-    def orgmetric(self, path, mid):
+    def orgmetric(self, path, aggr, mid):
         def context(request):
             return [], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'org-' + mid)(f)
+        return lambda f: self.metric(path, context, '{}-org-{}'.format(aggr, mid))(f)
 
-    def repometric(self, path, mid):
+    def repometric(self, path, aggr, mid):
         def context(request):
             return [self._get_repo_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'repo-' + mid)(f)
+        return lambda f: self.metric(path, context, '{}-repo-{}'.format(aggr, mid))(f)
 
-    def usermetric(self, path, mid):
+    def usermetric(self, path, aggr, mid):
         def context(request):
             return [self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'user-' + mid)(f)
+        return lambda f: self.metric(path, context, '{}-user-{}'.format(aggr, mid))(f)
 
-    def userrepometric(self, path, mid):
+    def userrepometric(self, path, aggr, mid):
         def context(request):
             return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, 'user-repo-' + mid)(f)
+        return lambda f: self.metric(path, context, '{}-repo-user-{}'.format(aggr, mid))(f)
 
     def orgtbd(self, path, mid):
         def context(request):
             return [], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'org-' + mid)(f)
+        return lambda f: self.metric(path, context, 'tbd-org-' + mid)(f)
 
     def repotbd(self, path, mid):
         def context(request):
             return [self._get_repo_context(request)], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'repo-' + mid)(f)
+        return lambda f: self.metric(path, context, 'tbd-repo-' + mid)(f)
 
     def usertbd(self, path, mid):
         def context(request):
             return [self._get_user_context(request)], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'user-' + mid)(f)
+        return lambda f: self.metric(path, context, 'tbd-user-' + mid)(f)
 
     def userrepotbd(self, path, mid):
         def context(request):
             return [self._get_repo_context(request), context], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'user-repo-' + mid)(f)
+        return lambda f: self.metric(path, context, 'tbd-repo-user' + mid)(f)
 
     def calculate(self, collector, quad, stop_event):
-        check_triggers(collector, quad, stop_event, self)
+        self.store.execute_pending()
+        check_triggers(collector, quad, stop_event)
+        self.store.execute_pending()
 
     def run(self, host=None, port=None, debug=None, **options):
         tasks = options.get('tasks', [])
