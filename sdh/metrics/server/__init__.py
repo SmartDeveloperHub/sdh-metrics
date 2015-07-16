@@ -134,6 +134,7 @@ class MetricsApp(AgoraApp):
         def wrapper(*args, **kwargs):
             data = f(*args, **kwargs)
             context = kwargs
+            context['timestamp'] = calendar.timegm(datetime.utcnow().timetuple())
             if isinstance(data, tuple):
                 context.update(data[0])
                 data = data[1]
@@ -174,19 +175,27 @@ class MetricsApp(AgoraApp):
 
     @staticmethod
     def _get_basic_context(request):
-        begin = int(request.args.get('begin', 0))
-        end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
-        if end < begin:
-            raise APIError('Begin cannot be higher than end')
+        begin = request.args.get('begin', None)
+        if begin is not None:
+            begin = int(begin)
+        end = request.args.get('end', None)  # calendar.timegm(datetime.utcnow().timetuple())))
+        if end is not None:
+            end = int(end)
+        if end is not None and end is not None:
+            if end < begin:
+                raise APIError('Begin cannot be higher than end')
         return {'begin': begin, 'end': end}
 
     def _get_metric_context(self, request):
-        num = request.args.get('num', 1)
+        _max = request.args.get('max', 1)
         context = self._get_basic_context(request)
-        context['num'] = max(0, int(num))
-        context['step'] = context['end'] - context['begin']
-        if context['num']:
-            context['step'] /= context['num']
+        context['max'] = max(0, int(_max))
+        if context['begin'] is not None and context['end'] is not None:
+            context['step'] = context['end'] - context['begin']
+        else:
+            context['step'] = None
+        if context['max'] and context['step'] is not None:
+            context['step'] /= context['max']
             if not context['step']:
                 raise APIError('Resulting step is 0')
 
@@ -238,7 +247,7 @@ class MetricsApp(AgoraApp):
         def context(request):
             return [self._get_repo_context(request), context], self._get_basic_context(request)
 
-        return lambda f: self.metric(path, context, 'tbd-repo-user' + mid)(f)
+        return lambda f: self.metric(path, context, 'tbd-repo-user-' + mid)(f)
 
     def calculate(self, collector, quad, stop_event):
         self.store.execute_pending()
