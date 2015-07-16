@@ -27,13 +27,16 @@ __author__ = 'Fernando Serena'
 import calendar
 from datetime import date
 from threading import Thread
-from datetime import datetime, timedelta
+from datetime import datetime
 from rdflib import Literal
 import multiprocessing
+import logging
 
 __calculus = set([])
-__dates = set([])
+__dates = {}
 __triggers = {}
+
+log = logging.getLogger('sdh.metrics')
 
 workers = multiprocessing.cpu_count()
 MAX_ACUM_DATES = workers * 100
@@ -55,41 +58,53 @@ def add_calculus(func, triggers):
             __triggers[trigger].add(func)
 
 
-def check_triggers(collector, (t, s, p, o), stop_event):
-    if collector in __triggers:
+def start_date_calculus(stop_event):
+    def get_calculus(_d):
+        collectors = __dates[_d]
+        return set.union(*[__triggers[c] for c in collectors])
+
+    date_chunks = chunks(list(__dates.keys()), workers)
+    for chunk in date_chunks:
+        threads = []
+        for dt in chunk:
+            thread = Thread(target=calculate_metrics,
+                            args=(dt, stop_event, get_calculus(dt)))
+            threads.append(thread)
+            thread.start()
+        [t.join() for t in threads]
+    __dates.clear()
+
+
+def check_triggers(collector, quad, stop_event):
+    if collector is None and __dates:
+        start_date_calculus(stop_event)
+    elif collector in __triggers:
+        _, _, _, o = quad
         if isinstance(o, Literal):
             obj = o.toPython()
             if isinstance(obj, datetime):
-                __dates.add(date(obj.year, obj.month, obj.day))
+                d = date(obj.year, obj.month, obj.day)
+                if d not in __dates:
+                    __dates[d] = set([])
+                __dates[d].add(collector)
                 if len(__dates) >= MAX_ACUM_DATES:
-                    date_chunks = chunks(list(__dates), workers)
-                    for chunk in date_chunks:
-                        threads = []
-                        for d in chunk:
-                            thread = Thread(target=calculate_metrics,
-                                            args=(d, d, stop_event, __triggers[collector]))
-                            threads.append(thread)
-                            thread.start()
-                        [t.join() for t in threads]
-                    __dates.clear()
+                    start_date_calculus(stop_event)
 
 
-def calculate_metrics(first_date, max_date, stop_event, calcs):
-    next_date = date(first_date.year, first_date.month, first_date.day)
-    max_date = date(max_date.year, max_date.month, max_date.day) + timedelta(days=1)
-    print 'Making calculus for [{}, {}]...'.format(next_date, max_date),
+def calculate_metrics(dt, stop_event, calcs):
+    calc_date = date(dt.year, dt.month, dt.day)
     pre = datetime.now()
-    while next_date <= max_date:
-        t_begin = calendar.timegm(next_date.timetuple())
-        end_date = datetime(next_date.year, next_date.month, next_date.day)
-        end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-        t_end = calendar.timegm(end_date.timetuple())
+    t_begin = calendar.timegm(calc_date.timetuple())
+    end_date = datetime(calc_date.year, calc_date.month, calc_date.day)
+    end_date = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+    t_end = calendar.timegm(end_date.timetuple())
 
-        # Run all registered calculus
-        for c in calcs:
-            c(t_begin, t_end)
-
-        next_date = next_date + timedelta(days=1)
+    # Run all triggered calculus
+    for c in calcs:
+        c(t_begin, t_end)
         if stop_event.isSet():
-            return
-    print 'it took {}ms'.format((datetime.now() - pre).microseconds / float(1000))
+            break
+
+    took = (datetime.now() - pre).microseconds / float(1000)
+    calc_names = [f.func_name for f in calcs]
+    log.info('Updated {} calculations ({}) for day {} in {}ms'.format(len(calc_names), calc_names, calc_date, took))
