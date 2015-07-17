@@ -178,12 +178,20 @@ class MetricsApp(AgoraApp):
         begin = request.args.get('begin', None)
         if begin is not None:
             begin = int(begin)
-        end = request.args.get('end', None)  # calendar.timegm(datetime.utcnow().timetuple())))
+        end = request.args.get('end', None)
         if end is not None:
             end = int(end)
         if end is not None and end is not None:
             if end < begin:
                 raise APIError('Begin cannot be higher than end')
+        return {'begin': begin, 'end': end}
+
+    @staticmethod
+    def _get_tbd_context(request):
+        begin = int(request.args.get('begin', 0))
+        end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
+        if end < begin:
+            raise APIError('Begin cannot be higher than end')
         return {'begin': begin, 'end': end}
 
     def _get_metric_context(self, request):
@@ -219,7 +227,7 @@ class MetricsApp(AgoraApp):
 
         return lambda f: self.metric(path, context, '{}-user-{}'.format(aggr, mid))(f)
 
-    def userrepometric(self, path, aggr, mid):
+    def repousermetric(self, path, aggr, mid):
         def context(request):
             return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
 
@@ -227,25 +235,25 @@ class MetricsApp(AgoraApp):
 
     def orgtbd(self, path, mid):
         def context(request):
-            return [], self._get_basic_context(request)
+            return [], self._get_tbd_context(request)
 
         return lambda f: self.metric(path, context, 'tbd-org-' + mid)(f)
 
     def repotbd(self, path, mid):
         def context(request):
-            return [self._get_repo_context(request)], self._get_basic_context(request)
+            return [self._get_repo_context(request)], self._get_tbd_context(request)
 
         return lambda f: self.metric(path, context, 'tbd-repo-' + mid)(f)
 
     def usertbd(self, path, mid):
         def context(request):
-            return [self._get_user_context(request)], self._get_basic_context(request)
+            return [self._get_user_context(request)], self._get_tbd_context(request)
 
         return lambda f: self.metric(path, context, 'tbd-user-' + mid)(f)
 
     def userrepotbd(self, path, mid):
         def context(request):
-            return [self._get_repo_context(request), context], self._get_basic_context(request)
+            return [self._get_repo_context(request), self._get_user_context(request)], self._get_tbd_context(request)
 
         return lambda f: self.metric(path, context, 'tbd-repo-user-' + mid)(f)
 
