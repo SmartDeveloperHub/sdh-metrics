@@ -89,7 +89,10 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     values = []
     step = get_step()
 
-    extend = begin < data_begin or end > data_end or max != 1
+    extend = extend or begin < data_begin or end > data_end or max_n != 1
+
+    if begin == end:
+        end = begin + 86400
 
     while step_begin <= end - step:
         step_end = step_begin + step

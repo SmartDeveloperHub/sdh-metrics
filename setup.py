@@ -28,7 +28,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="SDH-Metrics",
-    version="0.0.14",
+    version="0.0.21",
     author="Fernando Serena",
     author_email="fernando.serena@centeropenmiddleware.com",
     description="A library for making temporal information services for the SDH project.",
