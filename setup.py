@@ -28,7 +28,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="SDH-Metrics",
-    version="0.0.21",
+    version="0.1.0-alpha",
     author="Fernando Serena",
     author_email="fernando.serena@centeropenmiddleware.com",
     description="A library for making temporal information services for the SDH project.",
@@ -38,6 +38,6 @@ setup(
     download_url="https://github.com/smartdeveloperhub/sdh-metrics/tarball/0.2.2",
     packages=find_packages(exclude=['ez_setup', 'examples', 'tests']),
     namespace_packages=['sdh', 'sdh.metrics', 'sdh.metrics.store', 'sdh.metrics.jobs'],
-    install_requires=['flask', 'Flask_Negotiate', 'redis', 'hiredis', 'rdflib', 'Agora-Service-Provider', 'pytz'],
+    install_requires=['flask', 'Flask_Negotiate', 'redis', 'hiredis', 'rdflib', 'Fragment-Service-Provider', 'pytz'],
     classifiers=[]
 )

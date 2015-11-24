@@ -24,10 +24,10 @@
 
 __author__ = 'Fernando Serena'
 
-from agora.provider.server.base import AgoraApp, get_accept
+from sdh.fragments.server.base import FragmentApp, get_accept
 import calendar
 from datetime import datetime
-from agora.provider.server.base import APIError, NotFound
+from sdh.fragments.server.base import APIError, NotFound
 from flask import make_response, url_for
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
@@ -70,7 +70,7 @@ class MetricsGraph(Graph):
                                                                  base=base, encoding=encoding, **args)
 
 
-class MetricsApp(AgoraApp):
+class MetricsApp(FragmentApp):
     @staticmethod
     def __get_metric_definition_graph(md):
         g = MetricsGraph()

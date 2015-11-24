@@ -25,14 +25,14 @@
 __author__ = 'Fernando Serena'
 
 import redis
-from agora.provider.jobs.collect import collect as acollect
+from sdh.fragments.jobs.collect import collect as acollect
 from datetime import datetime
 from threading import Lock
 # from redis.lock import Lock
 
 class FragmentStore(object):
     def __init__(self, redis_host, max_pending=200):
-        self.__pool = redis.ConnectionPool(host=redis_host, port=6379, db=4)
+        self.__pool = redis.ConnectionPool(host=redis_host['host'], port=6379, db=redis_host['db'])
         self.__r = redis.StrictRedis(connection_pool=self.__pool)
         self.__pipe = self.__r.pipeline()
         self.__pending_transactions = 0
