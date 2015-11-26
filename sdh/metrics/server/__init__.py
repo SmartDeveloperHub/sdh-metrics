@@ -31,26 +31,32 @@ from sdh.fragments.server.base import APIError, NotFound
 from flask import make_response, url_for
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
-from rdflib import Graph, URIRef, Literal
+from rdflib import Graph, URIRef, Literal, BNode
 from functools import wraps
 from sdh.metrics.jobs.calculus import check_triggers
 
 import pkg_resources
+
 try:
     pkg_resources.declare_namespace(__name__)
 except ImportError:
     import pkgutil
+
     __path__ = pkgutil.extend_path(__path__, __name__)
 
-
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
+VIEWS = Namespace('http://www.smartdeveloperhub.org/vocabulary/views#')
 PLATFORM = Namespace('http://www.smartdeveloperhub.org/vocabulary/platform#')
+SCM = Namespace('http://www.smartdeveloperhub.org/vocabulary/scm#')
+CI = Namespace('http://www.smartdeveloperhub.org/vocabulary/ci#')
+ORG = Namespace('http://www.smartdeveloperhub.org/vocabulary/organization#')
 
 
-class MetricsGraph(Graph):
+class OperationsGraph(Graph):
     def __init__(self):
-        super(MetricsGraph, self).__init__()
+        super(OperationsGraph, self).__init__()
         self.bind('metrics', METRICS)
+        self.bind('views', VIEWS)
         self.bind('platform', PLATFORM)
 
     @staticmethod
@@ -66,17 +72,30 @@ class MetricsGraph(Graph):
     def serialize(self, destination=None, format="xml",
                   base=None, encoding=None, **args):
         content_type, ex_format = self.__decide_serialization_format()
-        return content_type, super(MetricsGraph, self).serialize(destination=destination, format=ex_format,
-                                                                 base=base, encoding=encoding, **args)
+        return content_type, super(OperationsGraph, self).serialize(destination=destination, format=ex_format,
+                                                                    base=base, encoding=encoding, **args)
 
 
 class MetricsApp(FragmentApp):
-    @staticmethod
-    def __get_metric_definition_graph(md):
-        g = MetricsGraph()
-        me = URIRef(url_for('__get_definition', md=md, _external=True))
-        g.add((me, RDF.type, METRICS.MetricDefinition))
-        g.add((me, PLATFORM.identifier, Literal(md)))
+    def __get_definition_graph(self, definition, parameters, title):
+        g = OperationsGraph()
+        me = URIRef(url_for('__get_definition', definition=definition, _external=True))
+        if definition in self.metrics.values():
+            g.add((me, RDF.type, METRICS.MetricDefinition))
+        else:
+            g.add((me, RDF.type, VIEWS.ViewDefinition))
+        g.add((me, PLATFORM.identifier, Literal(definition)))
+        if parameters:
+            signature_node = BNode('signature')
+            g.add((me, PLATFORM.hasSignature, signature_node))
+            for p in parameters:
+                g.add((signature_node, RDF.type, PLATFORM.Signature))
+                parameter_node = BNode()
+                g.add((signature_node, PLATFORM.hasParameter, parameter_node))
+                g.add((parameter_node, RDF.type, PLATFORM.Parameter))
+                g.add((parameter_node, PLATFORM.targetType, URIRef(p)))
+        if title:
+            g.add((me, PLATFORM.title, Literal(title)))
         return g
 
     @staticmethod
@@ -87,27 +106,40 @@ class MetricsApp(FragmentApp):
         return response
 
     @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
-    def __get_definition(self, md):
-        if md not in self.metrics.values():
-            raise NotFound('Unknown metric definition')
+    def __get_definition(self, definition):
+        if definition not in self.metrics.values() and definition not in self.views.values():
+            raise NotFound('Unknown definition')
 
-        g = self.__get_metric_definition_graph(md)
+        g = self.__get_definition_graph(definition, self.parameters.get(definition, None),
+                                        self.titles.get(definition, None))
         return self.__return_graph(g)
 
     @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
     def __root(self):
-        g = MetricsGraph()
+        g = OperationsGraph()
         me = URIRef(url_for('__root', _external=True))
-        g.add((me, RDF.type, METRICS.MetricService))
+        if self.metrics:
+            g.add((me, RDF.type, METRICS.MetricService))
         for mf in self.metrics.keys():
             endp = URIRef(url_for(mf, _external=True))
             g.add((me, METRICS.hasEndpoint, endp))
 
             mident = self.metrics[mf]
-            md = URIRef(url_for('__get_definition', md=mident, _external=True))
+            md = URIRef(url_for('__get_definition', definition=mident, _external=True))
             g.add((me, METRICS.calculatesMetric, md))
             g.add((md, RDF.type, METRICS.MetricDefinition))
             g.add((md, PLATFORM.identifier, Literal(mident)))
+        if self.views:
+            g.add((me, RDF.type, METRICS.ViewService))
+        for vf in self.views.keys():
+            endp = URIRef(url_for(vf, _external=True))
+            g.add((me, VIEWS.hasEndpoint, endp))
+
+            vid = self.views[vf]
+            vd = URIRef(url_for('__get_definition', definition=vid, _external=True))
+            g.add((me, METRICS.producesView, vd))
+            g.add((vd, RDF.type, VIEWS.ViewDefinition))
+            g.add((vd, PLATFORM.identifier, Literal(vid)))
 
         return self.__return_graph(g)
 
@@ -115,8 +147,11 @@ class MetricsApp(FragmentApp):
         super(MetricsApp, self).__init__(name, config_class)
 
         self.metrics = {}
-        self.route('/metrics')(self.__root)
-        self.route('/metrics/definitions/<md>')(self.__get_definition)
+        self.views = {}
+        self.parameters = {}
+        self.titles = {}
+        self.route('/api')(self.__root)
+        self.route('/api/definitions/<definition>')(self.__get_definition)
         self.store = None
 
     def __metric_rdfizer(self, func):
@@ -125,7 +160,16 @@ class MetricsApp(FragmentApp):
         g.bind('platform', PLATFORM)
         me = URIRef(url_for(func, _external=True))
         g.add((me, RDF.type, METRICS.MetricEndpoint))
-        g.add((me, METRICS.supports, URIRef(url_for('__get_definition', md=self.metrics[func], _external=True))))
+        g.add(
+            (me, METRICS.supports, URIRef(url_for('__get_definition', definition=self.metrics[func], _external=True))))
+
+    def __view_rdfizer(self, func):
+        g = Graph()
+        g.bind('views', METRICS)
+        g.bind('platform', PLATFORM)
+        me = URIRef(url_for(func, _external=True))
+        g.add((me, RDF.type, VIEWS.ViewEndpoint))
+        g.add((me, VIEWS.supports, URIRef(url_for('__get_definition', definition=self.views[func], _external=True))))
 
         return g
 
@@ -144,19 +188,39 @@ class MetricsApp(FragmentApp):
 
         return wrapper
 
-    def metric(self, path, handler, mid):
+    def metric(self, path, handler, mid, **kwargs):
         def decorator(f):
             f = self.__add_context(f)
             f = self.register('/metrics' + path, handler, self.__metric_rdfizer)(f)
             self.metrics[f.func_name] = mid
+            if 'parameters' in kwargs:
+                self.parameters[mid] = kwargs['parameters']
+            if 'title' in kwargs:
+                self.titles[mid] = kwargs['title']
             return f
+
+        return decorator
+
+    def view(self, path, handler, mid, **kwargs):
+        def decorator(f):
+            f = self.__add_context(f)
+            f = self.register('/views' + path, handler, self.__view_rdfizer)(f)
+            self.views[f.func_name] = mid
+            if 'parameters' in kwargs:
+                self.parameters[mid] = kwargs['parameters']
+            if 'title' in kwargs:
+                self.titles[mid] = kwargs['title']
+            return f
+
         return decorator
 
     def calculus(self, triggers=None):
         def decorator(f):
             from sdh.metrics.jobs.calculus import add_calculus
+
             add_calculus(f, triggers)
             return f
+
         return decorator
 
     @staticmethod
@@ -165,6 +229,20 @@ class MetricsApp(FragmentApp):
         if rid is None:
             raise APIError('A repository ID is required')
         return rid
+
+    @staticmethod
+    def _get_product_context(request):
+        prid = request.args.get('prid', None)
+        if prid is None:
+            raise APIError('A product ID is required')
+        return prid
+
+    @staticmethod
+    def _get_project_context(request):
+        pjid = request.args.get('pjid', None)
+        if pjid is None:
+            raise APIError('A project ID is required')
+        return pjid
 
     @staticmethod
     def _get_user_context(request):
@@ -187,7 +265,7 @@ class MetricsApp(FragmentApp):
         return {'begin': begin, 'end': end}
 
     @staticmethod
-    def _get_tbd_context(request):
+    def _get_view_context(request):
         begin = int(request.args.get('begin', 0))
         end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
         if end < begin:
@@ -209,53 +287,71 @@ class MetricsApp(FragmentApp):
 
         return context
 
-    def orgmetric(self, path, aggr, mid):
+    def orgmetric(self, path, aggr, mid, **kwargs):
         def context(request):
             return [], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, '{}-org-{}'.format(aggr, mid))(f)
+        return lambda f: self.metric(path, context, '{}-org{}'.format(aggr, mid), **kwargs)(f)
 
-    def repometric(self, path, aggr, mid):
+    def repometric(self, path, aggr, mid, **kwargs):
         def context(request):
             return [self._get_repo_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, '{}-repo-{}'.format(aggr, mid))(f)
+        return lambda f: self.metric(path, context, '{}-repo{}'.format(aggr, mid), parameters=[SCM.Repository],
+                                     **kwargs)(f)
 
-    def usermetric(self, path, aggr, mid):
+    def productmetric(self, path, aggr, mid, **kwargs):
+        def context(request):
+            return [self._get_product_context(request)], self._get_metric_context(request)
+
+        return lambda f: self.metric(path, context, '{}-product{}'.format(aggr, mid), parameters=[ORG.Product],
+                                     **kwargs)(f)
+
+    def projectmetric(self, path, aggr, mid, **kwargs):
+        def context(request):
+            return [self._get_project_context(request)], self._get_metric_context(request)
+
+        return lambda f: self.metric(path, context, '{}-project{}'.format(aggr, mid), parameters=[ORG.Project],
+                                     **kwargs)(f)
+
+    def membermetric(self, path, aggr, mid, **kwargs):
         def context(request):
             return [self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, '{}-user-{}'.format(aggr, mid))(f)
+        return lambda f: self.metric(path, context, '{}-member{}'.format(aggr, mid), parameters=[ORG.Person],
+                                     **kwargs)(f)
 
-    def repousermetric(self, path, aggr, mid):
+    def repomembermetric(self, path, aggr, mid, **kwargs):
         def context(request):
             return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, '{}-repo-user-{}'.format(aggr, mid))(f)
+        return lambda f: self.metric(path, context, '{}-repomember{}'.format(aggr, mid),
+                                     parameters=[SCM.Repository, ORG.Person], **kwargs)(f)
 
-    def orgtbd(self, path, mid):
+    def orgview(self, path, mid, **kwargs):
         def context(request):
-            return [], self._get_tbd_context(request)
+            return [], self._get_view_context(request)
 
-        return lambda f: self.metric(path, context, 'tbd-org-' + mid)(f)
+        return lambda f: self.view(path, context, 'view-org' + mid, **kwargs)(f)
 
-    def repotbd(self, path, mid):
+    def repoview(self, path, mid, **kwargs):
         def context(request):
-            return [self._get_repo_context(request)], self._get_tbd_context(request)
+            return [self._get_repo_context(request)], self._get_view_context(request)
 
-        return lambda f: self.metric(path, context, 'tbd-repo-' + mid)(f)
+        return lambda f: self.view(path, context, 'view-repo' + mid, parameters=[SCM.Repository], **kwargs)(f)
 
-    def usertbd(self, path, mid):
+    def memberview(self, path, mid, **kwargs):
         def context(request):
-            return [self._get_user_context(request)], self._get_tbd_context(request)
+            return [self._get_user_context(request)], self._get_view_context(request)
 
-        return lambda f: self.metric(path, context, 'tbd-user-' + mid)(f)
+        return lambda f: self.view(path, context, 'view-member' + mid, parameters=[ORG.Person], **kwargs)(f)
 
-    def userrepotbd(self, path, mid):
+    def memberrepoview(self, path, mid, **kwargs):
         def context(request):
-            return [self._get_repo_context(request), self._get_user_context(request)], self._get_tbd_context(request)
+            return [self._get_repo_context(request), self._get_user_context(request)], self._get_view_context(request)
 
-        return lambda f: self.metric(path, context, 'tbd-repo-user-' + mid)(f)
+        return lambda f: self.view(path, context, 'view-repomember' + mid, parameters=[SCM.Repository, ORG.Person],
+                                   **kwargs)(f)
 
     def calculate(self, collector, quad, stop_event):
         self.store.execute_pending()

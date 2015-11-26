@@ -30,6 +30,11 @@ import types
 import math
 
 
+def flat_sum(lst):
+    return sum((flat_sum(elem) if
+                hasattr(elem, "__iter__") and not isinstance(elem, basestring)
+                else [elem] for elem in lst), [])
+
 def __build_time_chunk(store, key, begin, end, fill):
     _next = begin
     while _next < end:
