@@ -1,7 +1,7 @@
 redis
 hiredis
 rdflib
-Agora-Service-Provider
+Fragment-Service-Provider
 flask
 Flask-Negotiate
 pytz

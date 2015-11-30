@@ -163,6 +163,8 @@ class MetricsApp(FragmentApp):
         g.add(
             (me, METRICS.supports, URIRef(url_for('__get_definition', definition=self.metrics[func], _external=True))))
 
+        return g
+
     def __view_rdfizer(self, func):
         g = Graph()
         g.bind('views', METRICS)
