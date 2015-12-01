@@ -31,8 +31,8 @@ from threading import Lock
 # from redis.lock import Lock
 
 class FragmentStore(object):
-    def __init__(self, redis_host, max_pending=200):
-        self.__pool = redis.ConnectionPool(host=redis_host['host'], port=6379, db=redis_host['db'])
+    def __init__(self, host='localhost', db=5, port=6379, max_pending=200):
+        self.__pool = redis.ConnectionPool(host=host, port=port, db=db)
         self.__r = redis.StrictRedis(connection_pool=self.__pool)
         self.__pipe = self.__r.pipeline()
         self.__pending_transactions = 0
