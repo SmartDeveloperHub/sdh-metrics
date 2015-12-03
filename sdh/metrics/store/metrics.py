@@ -105,11 +105,11 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
             chunk = [eval(res)['v'] for res in store.db.zrangebyscore(key, step_begin, step_end)]
         else:
             chunk = []
-            pre_fill = math.ceil((data_begin - begin) / 86400)
+            pre_fill = int(math.ceil((data_begin - begin) / 86400))
             if pre_fill:
                 chunk += [fill] * pre_fill
             chunk += list(__build_time_chunk(store, key, step_begin, step_end, fill))
-            post_fill = math.ceil((end - data_end) / 86400)
+            post_fill = int(math.ceil((end - data_end) / 86400))
             if post_fill:
                 chunk += [fill] * post_fill
 
