@@ -26,9 +26,9 @@ __author__ = 'Fernando Serena'
 
 import redis
 from sdh.fragments.jobs.collect import collect as acollect
+from sdh.fragments.jobs.query import query as aquery
 from datetime import datetime
 from threading import Lock
-# from redis.lock import Lock
 
 class FragmentStore(object):
     def __init__(self, host='localhost', db=5, port=6379, max_pending=200):
@@ -70,6 +70,11 @@ class FragmentStore(object):
     def collect(self, tp):
         def wrapper(f):
             return acollect(tp, self)(f)
+        return wrapper
+
+    def query(self, gp):
+        def wrapper(f):
+            return aquery(gp, self)(f)
         return wrapper
 
     @property
