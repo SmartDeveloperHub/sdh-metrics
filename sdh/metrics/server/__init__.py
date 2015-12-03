@@ -34,15 +34,8 @@ from rdflib.namespace import Namespace, RDF
 from rdflib import Graph, URIRef, Literal, BNode
 from functools import wraps
 from sdh.metrics.jobs.calculus import check_triggers
+import shortuuid
 
-import pkg_resources
-
-try:
-    pkg_resources.declare_namespace(__name__)
-except ImportError:
-    import pkgutil
-
-    __path__ = pkgutil.extend_path(__path__, __name__)
 
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
 VIEWS = Namespace('http://www.smartdeveloperhub.org/vocabulary/views#')
@@ -84,6 +77,7 @@ class MetricsApp(FragmentApp):
             g.add((me, RDF.type, METRICS.MetricDefinition))
         else:
             g.add((me, RDF.type, VIEWS.ViewDefinition))
+            g.add((me, VIEWS.target, self.view_targets[definition]))
         g.add((me, PLATFORM.identifier, Literal(definition)))
         if parameters:
             signature_node = BNode('signature')
@@ -149,6 +143,7 @@ class MetricsApp(FragmentApp):
         self.metrics = {}
         self.views = {}
         self.parameters = {}
+        self.view_targets = {}
         self.titles = {}
         self.route('/api')(self.__root)
         self.route('/api/definitions/<definition>')(self.__get_definition)
@@ -190,28 +185,31 @@ class MetricsApp(FragmentApp):
 
         return wrapper
 
-    def metric(self, path, handler, mid, **kwargs):
+    def _metric(self, path, handler, aggr, **kwargs):
         def decorator(f):
             f = self.__add_context(f)
             f = self.register('/metrics' + path, handler, self.__metric_rdfizer)(f)
-            self.metrics[f.func_name] = mid
+            uuid = '{}-{}'.format(aggr, shortuuid.uuid())
+            self.metrics[f.func_name] = uuid
             if 'parameters' in kwargs:
-                self.parameters[mid] = kwargs['parameters']
+                self.parameters[uuid] = kwargs['parameters']
             if 'title' in kwargs:
-                self.titles[mid] = kwargs['title']
+                self.titles[uuid] = kwargs['title']
             return f
 
         return decorator
 
-    def view(self, path, handler, mid, **kwargs):
+    def _view(self, path, handler, target, **kwargs):
         def decorator(f):
             f = self.__add_context(f)
             f = self.register('/views' + path, handler, self.__view_rdfizer)(f)
-            self.views[f.func_name] = mid
+            uuid = shortuuid.uuid()
+            self.views[f.func_name] = uuid
+            self.view_targets[uuid] = target
             if 'parameters' in kwargs:
-                self.parameters[mid] = kwargs['parameters']
+                self.parameters[uuid] = kwargs['parameters']
             if 'title' in kwargs:
-                self.titles[mid] = kwargs['title']
+                self.titles[uuid] = kwargs['title']
             return f
 
         return decorator
@@ -247,7 +245,7 @@ class MetricsApp(FragmentApp):
         return pjid
 
     @staticmethod
-    def _get_user_context(request):
+    def _get_member_context(request):
         uid = request.args.get('uid', None)
         if uid is None:
             raise APIError('A user ID is required')
@@ -289,71 +287,31 @@ class MetricsApp(FragmentApp):
 
         return context
 
-    def orgmetric(self, path, aggr, mid, **kwargs):
+    def __context_by_parameter(self, param):
+        if param == ORG.Person:
+            return self._get_repo_context
+        elif param == ORG.Product:
+            return self._get_product_context
+        elif param == ORG.Project:
+            return self._get_project_context
+        elif param == SCM.Repository:
+            return self._get_repo_context
+        else:
+            return None
+
+    def metric(self, path, aggr='sum', **kwargs):
         def context(request):
-            return [], self._get_metric_context(request)
+            parameters = kwargs.get('parameters', [])
+            return map(self.__context_by_parameter, parameters), self._get_metric_context(request)
 
-        return lambda f: self.metric(path, context, '{}-org{}'.format(aggr, mid), **kwargs)(f)
+        return lambda f: self._metric(path, context, aggr, **kwargs)(f)
 
-    def repometric(self, path, aggr, mid, **kwargs):
+    def view(self, path, target, **kwargs):
         def context(request):
-            return [self._get_repo_context(request)], self._get_metric_context(request)
+            parameters = kwargs.get('parameters', [])
+            return map(self.__context_by_parameter, parameters), self._get_view_context(request)
 
-        return lambda f: self.metric(path, context, '{}-repo{}'.format(aggr, mid), parameters=[SCM.Repository],
-                                     **kwargs)(f)
-
-    def productmetric(self, path, aggr, mid, **kwargs):
-        def context(request):
-            return [self._get_product_context(request)], self._get_metric_context(request)
-
-        return lambda f: self.metric(path, context, '{}-product{}'.format(aggr, mid), parameters=[ORG.Product],
-                                     **kwargs)(f)
-
-    def projectmetric(self, path, aggr, mid, **kwargs):
-        def context(request):
-            return [self._get_project_context(request)], self._get_metric_context(request)
-
-        return lambda f: self.metric(path, context, '{}-project{}'.format(aggr, mid), parameters=[ORG.Project],
-                                     **kwargs)(f)
-
-    def membermetric(self, path, aggr, mid, **kwargs):
-        def context(request):
-            return [self._get_user_context(request)], self._get_metric_context(request)
-
-        return lambda f: self.metric(path, context, '{}-member{}'.format(aggr, mid), parameters=[ORG.Person],
-                                     **kwargs)(f)
-
-    def repomembermetric(self, path, aggr, mid, **kwargs):
-        def context(request):
-            return [self._get_repo_context(request), self._get_user_context(request)], self._get_metric_context(request)
-
-        return lambda f: self.metric(path, context, '{}-repomember{}'.format(aggr, mid),
-                                     parameters=[SCM.Repository, ORG.Person], **kwargs)(f)
-
-    def orgview(self, path, mid, **kwargs):
-        def context(request):
-            return [], self._get_view_context(request)
-
-        return lambda f: self.view(path, context, 'view-org' + mid, **kwargs)(f)
-
-    def repoview(self, path, mid, **kwargs):
-        def context(request):
-            return [self._get_repo_context(request)], self._get_view_context(request)
-
-        return lambda f: self.view(path, context, 'view-repo' + mid, parameters=[SCM.Repository], **kwargs)(f)
-
-    def memberview(self, path, mid, **kwargs):
-        def context(request):
-            return [self._get_user_context(request)], self._get_view_context(request)
-
-        return lambda f: self.view(path, context, 'view-member' + mid, parameters=[ORG.Person], **kwargs)(f)
-
-    def memberrepoview(self, path, mid, **kwargs):
-        def context(request):
-            return [self._get_repo_context(request), self._get_user_context(request)], self._get_view_context(request)
-
-        return lambda f: self.view(path, context, 'view-repomember' + mid, parameters=[SCM.Repository, ORG.Person],
-                                   **kwargs)(f)
+        return lambda f: self._view(path, context, target, **kwargs)(f)
 
     def calculate(self, collector, quad, stop_event):
         self.store.execute_pending()
