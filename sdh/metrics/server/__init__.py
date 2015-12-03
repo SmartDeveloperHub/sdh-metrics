@@ -28,14 +28,13 @@ from sdh.fragments.server.base import FragmentApp, get_accept
 import calendar
 from datetime import datetime
 from sdh.fragments.server.base import APIError, NotFound
-from flask import make_response, url_for
+from flask import make_response, url_for, jsonify
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
 from rdflib import Graph, URIRef, Literal, BNode
 from functools import wraps
 from sdh.metrics.jobs.calculus import check_triggers
 import shortuuid
-
 
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
 VIEWS = Namespace('http://www.smartdeveloperhub.org/vocabulary/views#')
@@ -67,6 +66,12 @@ class OperationsGraph(Graph):
         content_type, ex_format = self.__decide_serialization_format()
         return content_type, super(OperationsGraph, self).serialize(destination=destination, format=ex_format,
                                                                     base=base, encoding=encoding, **args)
+
+
+def _handle_invalid_usage(error):
+    response = jsonify(error.to_dict())
+    response.status_code = error.status_code
+    return response
 
 
 class MetricsApp(FragmentApp):
@@ -148,6 +153,8 @@ class MetricsApp(FragmentApp):
         self.route('/api')(self.__root)
         self.route('/api/definitions/<definition>')(self.__get_definition)
         self.store = None
+
+        self.errorhandler(APIError)(_handle_invalid_usage)
 
     def __metric_rdfizer(self, func):
         g = Graph()
@@ -289,7 +296,7 @@ class MetricsApp(FragmentApp):
 
     def __context_by_parameter(self, param):
         if param == ORG.Person:
-            return self._get_repo_context
+            return self._get_member_context
         elif param == ORG.Product:
             return self._get_product_context
         elif param == ORG.Project:
@@ -302,7 +309,8 @@ class MetricsApp(FragmentApp):
     def metric(self, path, aggr='sum', **kwargs):
         def context(request):
             parameters = kwargs.get('parameters', [])
-            return map(self.__context_by_parameter, parameters), self._get_metric_context(request)
+            return map(lambda f: f(request), map(self.__context_by_parameter, parameters)), self._get_metric_context(
+                request)
 
         return lambda f: self._metric(path, context, aggr, **kwargs)(f)
 
