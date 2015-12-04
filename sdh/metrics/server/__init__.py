@@ -31,10 +31,15 @@ from sdh.fragments.server.base import APIError, NotFound
 from flask import make_response, url_for, jsonify
 from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
-from rdflib import Graph, URIRef, Literal, BNode
+from rdflib import Graph, URIRef, Literal
 from functools import wraps
 from sdh.metrics.jobs.calculus import check_triggers
 import shortuuid
+import logging
+import requests
+from urllib import urlencode
+
+log = logging.getLogger('sdh.metrics.server')
 
 METRICS = Namespace('http://www.smartdeveloperhub.org/vocabulary/metrics#')
 VIEWS = Namespace('http://www.smartdeveloperhub.org/vocabulary/views#')
@@ -85,11 +90,11 @@ class MetricsApp(FragmentApp):
             g.add((me, VIEWS.target, self.view_targets[definition]))
         g.add((me, PLATFORM.identifier, Literal(definition)))
         if parameters:
-            signature_node = BNode('signature')
+            signature_node = URIRef(me + '#signature')
             g.add((me, PLATFORM.hasSignature, signature_node))
-            for p in parameters:
+            for i, p in enumerate(parameters):
                 g.add((signature_node, RDF.type, PLATFORM.Signature))
-                parameter_node = BNode()
+                parameter_node = URIRef(me + '#param_{}'.format(i))
                 g.add((signature_node, PLATFORM.hasParameter, parameter_node))
                 g.add((parameter_node, RDF.type, PLATFORM.Parameter))
                 g.add((parameter_node, PLATFORM.targetType, URIRef(p)))
@@ -153,8 +158,8 @@ class MetricsApp(FragmentApp):
         self.route('/api')(self.__root)
         self.route('/api/definitions/<definition>')(self.__get_definition)
         self.store = None
-
-        self.errorhandler(APIError)(_handle_invalid_usage)
+        self.__available_views = {}
+        self.__available_metrics = {}
 
     def __metric_rdfizer(self, func):
         g = Graph()
@@ -192,31 +197,36 @@ class MetricsApp(FragmentApp):
 
         return wrapper
 
-    def _metric(self, path, handler, aggr, **kwargs):
+    def _metric(self, path, handler, aggr, id=None, **kwargs):
         def decorator(f):
+            mid = id
+            if mid is None:
+                mid = shortuuid.uuid()
             f = self.__add_context(f)
             f = self.register('/metrics' + path, handler, self.__metric_rdfizer)(f)
-            uuid = '{}-{}'.format(aggr, shortuuid.uuid())
-            self.metrics[f.func_name] = uuid
+            identifier = '{}-{}'.format(aggr, mid)
+            self.metrics[f.func_name] = identifier
             if 'parameters' in kwargs:
-                self.parameters[uuid] = kwargs['parameters']
+                self.parameters[identifier] = kwargs['parameters']
             if 'title' in kwargs:
-                self.titles[uuid] = kwargs['title']
+                self.titles[identifier] = kwargs['title']
             return f
 
         return decorator
 
-    def _view(self, path, handler, target, **kwargs):
+    def _view(self, path, handler, target, id=None, **kwargs):
         def decorator(f):
+            vid = id
+            if vid is None:
+                vid = shortuuid.uuid()
             f = self.__add_context(f)
             f = self.register('/views' + path, handler, self.__view_rdfizer)(f)
-            uuid = shortuuid.uuid()
-            self.views[f.func_name] = uuid
-            self.view_targets[uuid] = target
+            self.views[f.func_name] = vid
+            self.view_targets[vid] = target
             if 'parameters' in kwargs:
-                self.parameters[uuid] = kwargs['parameters']
+                self.parameters[vid] = kwargs['parameters']
             if 'title' in kwargs:
-                self.titles[uuid] = kwargs['title']
+                self.titles[vid] = kwargs['title']
             return f
 
         return decorator
@@ -326,8 +336,63 @@ class MetricsApp(FragmentApp):
         check_triggers(collector, quad, stop_event)
         self.store.execute_pending()
 
+    def __request_endpoint(self, endpoint, **kwargs):
+        query_params = urlencode({q: kwargs[q] for q in kwargs if kwargs[q] is not None})
+        url = '{}?{}'.format(endpoint, query_params)
+        response = requests.get(url, headers={'Accept': 'application/json'})
+        if response.status_code == 200:
+            r_json = response.json()
+            return r_json['context'], r_json['result']
+        raise EnvironmentError(response.text)
+
+    def request_metric(self, mid, **kwargs):
+        endpoint = self.__available_metrics.get(mid, None)
+        if endpoint is not None:
+            return self.__request_endpoint(endpoint, **kwargs)
+        raise AttributeError('No endpoint currently available for metric {}'.format(mid))
+
+    def request_view(self, vid, **kwargs):
+        endpoint = self.__available_views.get(vid, None)
+        if endpoint is not None:
+            return self.__request_endpoint(endpoint, **kwargs)
+        raise AttributeError('No endpoint currently available for view {}'.format(vid))
+
+    def __seek_available_endpoints(self):
+        from sdh.fragments.jobs.query import get_query_generator
+        import time
+        while True:
+            prefixes, gen = get_query_generator('?endpoint metrics:supports ?_md',
+                                                '?_md platform:identifier ?id',
+                                                wait=True, **self.config['PROVIDER'])
+
+            aux_dict = {}
+            for headers, res in gen:
+                mid, endpoint = res['id'], res['endpoint']
+                aux_dict[res['id']] = res['endpoint']
+                log.info('Found metric: {} at {}'.format(mid, endpoint))
+            self.__available_metrics = aux_dict.copy()
+
+            prefixes, gen = get_query_generator('?endpoint views:supports ?_vd',
+                                                '?_vd platform:identifier ?id',
+                                                wait=True, **self.config['PROVIDER'])
+
+            aux_dict.clear()
+            for headers, res in gen:
+                vid, endpoint = res['id'], res['endpoint']
+                aux_dict[res['id']] = res['endpoint']
+                log.info('Found view: {} at {}'.format(vid, endpoint))
+            self.__available_views = aux_dict.copy()
+
+            time.sleep(10)
+
     def run(self, host=None, port=None, debug=None, **options):
         tasks = options.get('tasks', [])
         tasks.append(self.calculate)
         options['tasks'] = tasks
+
+        from threading import Thread
+        seek_thread = Thread(target=self.__seek_available_endpoints)
+        seek_thread.daemon = True
+        seek_thread.start()
+
         super(MetricsApp, self).run(host, port, debug, **options)
