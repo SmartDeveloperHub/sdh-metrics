@@ -56,8 +56,7 @@ def store_calc(store, key, timestamp, value):
 def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     def get_step():
         step = end - begin
-        if max_n:
-            step /= max_n
+        step = step / max_n if max_n else 86400
         step = max(86400, step)
         return step
 
