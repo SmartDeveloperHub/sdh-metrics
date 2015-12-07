@@ -60,6 +60,8 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
         step = max(86400, step)
         return step
 
+    end_defined = end is not None
+
     try:
         if begin is None:
             end_limit = end
@@ -98,11 +100,15 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     if begin == end:
         end = begin + 86400
 
-    while step_begin <= end - step:
-        step_end = step_begin + step
-        if not extend:
-            chunk = [eval(res)['v'] for res in store.db.zrangebyscore(key, step_begin, step_end)]
-        else:
+    if not extend:
+        values.append([eval(res)['v'] for res in store.db.zrangebyscore(key, step_begin, step_begin + step)])
+    else:
+        condition = lambda: step_begin <= end - step if end_defined else step_begin <= end
+        while condition():
+            step_end = min(end, step_begin + step)
+            if not end_defined and ((not max_n and step_begin == end) or (max_n > 1 and step_end == end)):
+                step_end += 0.1
+
             chunk = []
             pre_fill = int(math.ceil((data_begin - begin) / 86400))
             if pre_fill:
@@ -112,8 +118,8 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
             if post_fill:
                 chunk += [fill] * post_fill
 
-        values.append(chunk)
-        step_begin = step_end
+            values.append(chunk)
+            step_begin = step_end
 
     result = [aggr(part) for part in values]
     if not max_n:
