@@ -176,7 +176,7 @@ class MetricsApp(FragmentApp):
 
     def __view_rdfizer(self, func):
         g = Graph()
-        g.bind('views', METRICS)
+        g.bind('views', VIEWS)
         g.bind('platform', PLATFORM)
         me = URIRef(url_for(func, _external=True))
         g.add((me, RDF.type, VIEWS.ViewEndpoint))
