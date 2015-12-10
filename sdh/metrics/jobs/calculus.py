@@ -39,7 +39,7 @@ __triggers = {}
 log = logging.getLogger('sdh.metrics')
 
 workers = multiprocessing.cpu_count()
-MAX_ACUM_DATES = workers * 2
+MAX_ACUM_DATES = workers * 1000
 
 
 def chunks(l, n):
@@ -101,7 +101,10 @@ def calculate_metrics(dt, stop_event, calcs):
 
     # Run all triggered calculus
     for c in calcs:
-        c(t_begin, t_end)
+        try:
+            c(t_begin, t_end)
+        except Exception, e:
+            log.error(e.message)
         if stop_event.isSet():
             break
 
