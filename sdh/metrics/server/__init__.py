@@ -59,14 +59,14 @@ class OperationsGraph(Graph):
     @staticmethod
     def __decide_serialization_format():
         mimes = get_accept()
-        if 'text/turtle' in mimes:
-            return 'text/turtle', 'turtle'
-        elif 'text/rdf+n3' in mimes:
-            return 'text/rdf+n3', 'n3'
-        else:
-            return 'application/xml', 'xml'
+        # if 'text/turtle' in mimes:
+        return 'text/turtle', 'turtle'
+        # elif 'text/rdf+n3' in mimes:
+        #     return 'text/rdf+n3', 'n3'
+        # else:
+        #     return 'application/xml', 'xml'
 
-    def serialize(self, destination=None, format="xml",
+    def serialize(self, destination=None, format="turtle",
                   base=None, encoding=None, **args):
         content_type, ex_format = self.__decide_serialization_format()
         return content_type, super(OperationsGraph, self).serialize(destination=destination, format=ex_format,
@@ -109,7 +109,8 @@ class MetricsApp(FragmentApp):
         response.headers['Content-Type'] = content_type
         return response
 
-    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
+    # @produces('text/turtle')
+    # @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
     def __get_definition(self, definition):
         if definition not in self.metrics.values() and definition not in self.views.values():
             raise NotFound('Unknown definition')
@@ -118,7 +119,8 @@ class MetricsApp(FragmentApp):
                                         self.titles.get(definition, None))
         return self.__return_graph(g)
 
-    @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
+    # @produces('text/turtle')
+    # @produces('text/turtle', 'text/rdf+n3', 'application/rdf+xml', 'application/xml')
     def __root(self):
         g = OperationsGraph()
         me = URIRef(url_for('__root', _external=True))
@@ -283,25 +285,30 @@ class MetricsApp(FragmentApp):
 
     @staticmethod
     def _get_view_context(request):
-        begin = int(request.args.get('begin', 0))
-        end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
-        if end < begin:
-            raise APIError('Begin cannot be higher than end')
-        return {'begin': begin, 'end': end}
+        try:
+            begin = int(request.args.get('begin', 0))
+            end = int(request.args.get('end', calendar.timegm(datetime.utcnow().timetuple())))
+            if end < begin:
+                raise APIError('Begin cannot be higher than end')
+            return {'begin': begin, 'end': end}
+        except ValueError, e:
+            raise APIError(e.message)
 
     def _get_metric_context(self, request):
         _max = request.args.get('max', 1)
         context = self._get_basic_context(request)
-        context['max'] = max(0, int(_max))
-        if context['begin'] is not None and context['end'] is not None:
-            context['step'] = context['end'] - context['begin']
-        else:
-            context['step'] = None
-        if context['max'] and context['step'] is not None:
-            context['step'] /= context['max']
-            if not context['step']:
-                raise APIError('Resulting step is 0')
-
+        try:
+            context['max'] = max(0, int(_max))
+            if context['begin'] is not None and context['end'] is not None:
+                context['step'] = context['end'] - context['begin']
+            else:
+                context['step'] = None
+            if context['max'] and context['step'] is not None:
+                context['step'] /= context['max']
+                if not context['step']:
+                    raise APIError('Resulting step is 0')
+        except ValueError, e:
+            raise APIError(e.message)
         return context
 
     def __context_by_parameter(self, param):
@@ -327,7 +334,8 @@ class MetricsApp(FragmentApp):
     def view(self, path, target, **kwargs):
         def context(request):
             parameters = kwargs.get('parameters', [])
-            return map(self.__context_by_parameter, parameters), self._get_view_context(request)
+            return map(lambda x: x(request), map(self.__context_by_parameter, parameters)), self._get_view_context(
+                request)
 
         return lambda f: self._view(path, context, target, **kwargs)(f)
 
@@ -360,6 +368,7 @@ class MetricsApp(FragmentApp):
     def __seek_available_endpoints(self):
         from sdh.fragments.jobs.query import get_query_generator
         import time
+
         while True:
             prefixes, gen = get_query_generator('?endpoint metrics:supports ?_md',
                                                 '?_md platform:identifier ?id',
@@ -383,7 +392,7 @@ class MetricsApp(FragmentApp):
                 log.info('Found view: {} at {}'.format(vid, endpoint))
             self.__available_views = aux_dict.copy()
 
-            time.sleep(10)
+            time.sleep(30)
 
     def run(self, host=None, port=None, debug=None, **options):
         tasks = options.get('tasks', [])
@@ -391,6 +400,7 @@ class MetricsApp(FragmentApp):
         options['tasks'] = tasks
 
         from threading import Thread
+
         seek_thread = Thread(target=self.__seek_available_endpoints)
         seek_thread.daemon = True
         seek_thread.start()
