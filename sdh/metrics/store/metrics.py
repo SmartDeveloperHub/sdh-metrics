@@ -56,7 +56,7 @@ def store_calc(store, key, timestamp, value):
 def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     def get_step():
         step = end - begin
-        step = step / max_n if max_n else 86400
+        step = step / float(max_n) if max_n else 86400
         step = max(86400, step)
         return step
 
@@ -106,15 +106,15 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
         condition = lambda: step_begin <= end - step if end_defined else step_begin <= end
         while condition():
             step_end = min(end, step_begin + step)
-            if not end_defined and ((not max_n and step_begin == end) or (max_n > 1 and step_end == end)):
+            if not end_defined and ((not max_n and step_begin == end) or (max_n and step_end == end)):
                 step_end += 0.1
 
             chunk = []
-            pre_fill = int(math.ceil((data_begin - begin) / 86400))
+            pre_fill = int(math.ceil((data_begin - step_begin) / 86400))
             if pre_fill:
                 chunk += [fill] * pre_fill
             chunk += list(__build_time_chunk(store, key, step_begin, step_end, fill))
-            post_fill = int(math.ceil((end - data_end) / 86400))
+            post_fill = int(math.ceil((step_end - data_end) / 86400))
             if post_fill:
                 chunk += [fill] * post_fill
 
