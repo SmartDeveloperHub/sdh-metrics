@@ -39,7 +39,7 @@ __triggers = {}
 log = logging.getLogger('sdh.metrics')
 
 workers = multiprocessing.cpu_count()
-MAX_ACUM_DATES = workers * 1000
+MAX_ACUM_DATES = workers * 10
 
 
 def chunks(l, n):
