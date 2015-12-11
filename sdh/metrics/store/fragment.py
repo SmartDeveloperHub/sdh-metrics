@@ -41,14 +41,13 @@ class FragmentStore(object):
         self.__max_pending = max_pending
 
     def __pipeline_actions(self):
-        r = redis.StrictRedis(connection_pool=self.__pool)
-        pipe = r.pipeline()
-        [pipe.__getattribute__(action_name)(*args) for (action_name, args) in self.__pending_actions]
-        try:
-            pipe.execute()
-            self.__pending_actions = []
-        except Exception, e:
-            print e.message
+        with self.__r.pipeline(transaction=True) as pipe:
+            [pipe.__getattribute__(action_name)(*args) for (action_name, args) in self.__pending_actions]
+            try:
+                pipe.execute()
+                self.__pending_actions = []
+            except Exception, e:
+                print e.message
 
     def execute(self, action_name, *args):
         self.__lock.acquire()

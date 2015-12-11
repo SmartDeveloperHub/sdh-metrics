@@ -75,10 +75,8 @@ def start_date_calculus(stop_event):
     __dates.clear()
 
 
-def check_triggers(collector, quad, stop_event):
-    if collector is None and __dates:
-        start_date_calculus(stop_event)
-    elif collector in __triggers:
+def check_triggers(collector, quad, stop_event, commit_fn):
+    if collector in __triggers:
         _, _, _, o = quad
         if isinstance(o, Literal):
             obj = o.toPython()
@@ -88,6 +86,7 @@ def check_triggers(collector, quad, stop_event):
                     __dates[d] = set([])
                 __dates[d].add(collector)
                 if len(__dates) >= MAX_ACUM_DATES:
+                    commit_fn()
                     start_date_calculus(stop_event)
 
 

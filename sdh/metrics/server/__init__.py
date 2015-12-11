@@ -33,7 +33,7 @@ from flask_negotiate import produces
 from rdflib.namespace import Namespace, RDF
 from rdflib import Graph, URIRef, Literal
 from functools import wraps
-from sdh.metrics.jobs.calculus import check_triggers
+from sdh.metrics.jobs.calculus import check_triggers, start_date_calculus
 import shortuuid
 import logging
 import requests
@@ -340,8 +340,11 @@ class MetricsApp(FragmentApp):
         return lambda f: self._view(path, context, target, **kwargs)(f)
 
     def calculate(self, collector, quad, stop_event):
+        check_triggers(collector, quad, stop_event, self.store.execute_pending)
+
+    def commit(self, stop_event):
         self.store.execute_pending()
-        check_triggers(collector, quad, stop_event)
+        start_date_calculus(stop_event)
         self.store.execute_pending()
 
     def __request_endpoint(self, endpoint, **kwargs):
@@ -395,9 +398,13 @@ class MetricsApp(FragmentApp):
             time.sleep(30)
 
     def run(self, host=None, port=None, debug=None, **options):
-        tasks = options.get('tasks', [])
-        tasks.append(self.calculate)
-        options['tasks'] = tasks
+        triggers = options.get('triggers', [])
+        triggers.append(self.calculate)
+        options['triggers'] = triggers
+
+        finishers = options.get('finishers', [])
+        finishers.append(self.commit)
+        options['finishers'] = finishers
 
         from threading import Thread
 
