@@ -190,6 +190,12 @@ class MetricsApp(FragmentApp):
             data = f(*args, **kwargs)
             context = kwargs
             context['timestamp'] = calendar.timegm(datetime.utcnow().timetuple())
+            if context['begin'] is None:
+                context['begin'] = 0
+            if context['end'] is None:
+                context['end'] = context['timestamp']
+            if context['step'] is None:
+                context['step'] = context['end'] - context['begin']
             if isinstance(data, tuple):
                 context.update(data[0])
                 data = data[1]
@@ -350,9 +356,12 @@ class MetricsApp(FragmentApp):
     def __request_endpoint(self, endpoint, **kwargs):
         query_params = urlencode({q: kwargs[q] for q in kwargs if kwargs[q] is not None})
         url = '{}?{}'.format(endpoint, query_params)
+        log.debug('Requesting external endpoint {}...'.format(url))
+        start_req_time = datetime.now()
         response = requests.get(url, headers={'Accept': 'application/json'})
         if response.status_code == 200:
             r_json = response.json()
+            log.debug('Received data from {} after {} s'.format(url, (datetime.now() - start_req_time).total_seconds()))
             return r_json['context'], r_json['result']
         raise EnvironmentError(response.text)
 
