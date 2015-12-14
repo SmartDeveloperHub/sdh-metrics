@@ -194,7 +194,7 @@ class MetricsApp(FragmentApp):
                 context['begin'] = 0
             if context['end'] is None:
                 context['end'] = context['timestamp']
-            if context['step'] is None:
+            if 'step' not in context or context['step'] is None:
                 context['step'] = context['end'] - context['begin']
             if isinstance(data, tuple):
                 context.update(data[0])
