@@ -92,6 +92,7 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     end = calendar.timegm(date.fromtimestamp(end).timetuple())
 
     step_begin = begin
+    step_end = begin
     values = []
     step = get_step()
 
@@ -103,19 +104,26 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     if not extend:
         values.append([eval(res)['v'] for res in store.db.zrangebyscore(key, step_begin, step_begin + step)])
     else:
-        condition = lambda: step_begin <= end - step if end_defined else step_begin <= end
+        condition = lambda: (step_begin - end + step) < 0.001 if end_defined else step_begin <= end
+        # condition = lambda: step_begin < end
         while condition():
-            step_end = min(end, step_begin + step)
+            step_end = step_begin + step
+            # step_end = min(end, step_begin + step)
+            end_extended = False
             if not end_defined and ((not max_n and step_begin == end) or (max_n and step_end == end)):
                 step_end += 0.1
+                end_extended = True
 
             chunk = []
             pre_fill = int(math.ceil((data_begin - step_begin) / 86400))
-            if pre_fill:
+            if pre_fill > 0:
                 chunk += [fill] * pre_fill
             chunk += list(__build_time_chunk(store, key, step_begin, step_end, fill))
-            post_fill = int(math.ceil((step_end - data_end) / 86400))
-            if post_fill:
+            end_overlap = step_end - data_end
+            if end_overlap < 0.001:
+                end_overlap = 0
+            post_fill = int(math.ceil(end_overlap / 86400))
+            if post_fill > 0 and not end_extended:
                 chunk += [fill] * post_fill
 
             values.append(chunk)
