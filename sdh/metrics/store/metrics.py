@@ -80,7 +80,7 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
             _, data_end = store.db.zrevrangebyscore(key, '+inf', '-inf', withscores=True, start=0, num=1).pop()
     except IndexError:
         if begin is None:
-            begin = 0
+            begin = calendar.timegm(datetime.now().timetuple())
         if end is None:
             end = calendar.timegm(datetime.now().timetuple())
         step = get_step()
@@ -92,11 +92,15 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     end = calendar.timegm(date.fromtimestamp(end).timetuple())
 
     step_begin = begin
-    step_end = begin
+    step_end = end
     values = []
     step = get_step()
 
-    extend = extend or begin < data_begin or end > data_end or max_n != 1
+    if not extend:
+        if max_n == 1:
+            extend = begin < data_begin or end > data_end
+        else:
+            extend = True
 
     if begin == end:
         end = begin + 86400
@@ -104,11 +108,9 @@ def aggregate(store, key, begin, end, max_n, aggr=sum, fill=0, extend=False):
     if not extend:
         values.append([eval(res)['v'] for res in store.db.zrangebyscore(key, step_begin, step_begin + step)])
     else:
-        condition = lambda: (step_begin - end + step) < 0.001 if end_defined else step_begin <= end
-        # condition = lambda: step_begin < end
+        condition = lambda: (step_begin - end + step) < 0.001
         while condition():
             step_end = step_begin + step
-            # step_end = min(end, step_begin + step)
             end_extended = False
             if not end_defined and ((not max_n and step_begin == end) or (max_n and step_end == end)):
                 step_end += 0.1
