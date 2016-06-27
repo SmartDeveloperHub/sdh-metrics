@@ -384,7 +384,7 @@ class MetricsApp(FragmentApp):
         while True:
             prefixes, gen = get_query_generator('?endpoint metrics:supports ?_md',
                                                 '?_md platform:identifier ?id',
-                                                wait=True, **self.config['PROVIDER'])
+                                                wait=True, **{'STOA': self.config['PROVIDER']})
 
             aux_dict = {}
             for headers, res in gen:
@@ -395,7 +395,7 @@ class MetricsApp(FragmentApp):
 
             prefixes, gen = get_query_generator('?endpoint views:supports ?_vd',
                                                 '?_vd platform:identifier ?id',
-                                                wait=True, **self.config['PROVIDER'])
+                                                wait=True, **{'STOA': self.config['PROVIDER']})
 
             aux_dict.clear()
             for headers, res in gen:
