@@ -30,6 +30,7 @@ from sdh.fragments.jobs.query import query as aquery
 from datetime import datetime
 from threading import Lock
 
+
 class FragmentStore(object):
     def __init__(self, host='localhost', db=5, port=6379, max_pending=200):
         self.__pool = redis.ConnectionPool(host=host, port=port, db=db)
